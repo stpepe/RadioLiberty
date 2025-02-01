@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Radio Liberty</title>
+    <style>
+        body {
+            background-color: #1e2a47; /* Темно-синий фон */
+            color: white;
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            flex-direction: column;
+            text-align: center;
+            overflow: hidden;
+        }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 20px;
+            font-weight: bold;
+            letter-spacing: 2px;
+        }
+
+        #uploadButton {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background-color: #fff;
+            border: none;
+            color: #1e2a47;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.3s ease;
+        }
+
+        #uploadButton:hover {
+            background-color: #ddd;
+        }
+
+        /* Кнопка Play (Круглая) */
+        .play-button {
+            background-color: #fff;
+            border: none;
+            color: #1e2a47;
+            width: 100px;
+            height: 100px;
+            border-radius: 50%; /* Делаем кнопку круглой */
+            font-size: 36px;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 30px;
+            transition: background-color 0.3s ease, transform 0.2s ease;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .play-button:hover {
+            background-color: #ddd;
+            transform: scale(1.05);
+        }
+
+        /* Скрытый input для загрузки файлов */
+        input[type="file"] {
+            display: none;
+        }
+
+        /* Блок с ползунком громкости */
+        .volume-container {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .volume-container label {
+            font-size: 18px;
+            margin-bottom: 5px;
+            display: block;
+        }
+
+        /* Полоска ползунка громкости (белая) */
+        #volumeControl {
+            width: 200px;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 6px;
+            background: white;
+            border-radius: 5px;
+            outline: none;
+            transition: opacity 0.2s;
+        }
+
+        /* Ползунок (кружок) — белый с тонкой серой обводкой */
+        #volumeControl::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            background: white;
+            border: 2px solid gray; /* Тонкая серая обводка */
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        #volumeControl::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            background: white;
+            border: 2px solid gray; /* Тонкая серая обводка */
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        /* Скрываем аудиоплеер */
+        #audioPlayer {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>Radio Liberty</h1>
+
+    <!-- Кнопка Play -->
+    <button class="play-button" id="startButton">►</button>
+
+    <!-- Элемент для загрузки файла -->
+    <input type="file" id="fileInput" accept=".mp3">
+    <label for="fileInput" id="uploadButton">Upload MP3</label>
+
+    <!-- Ползунок громкости -->
+    <div class="volume-container">
+        <label for="volumeControl">Громкость</label>
+        <input type="range" id="volumeControl" min="0" max="1" step="0.01" value="1">
+    </div>
+
+    <!-- Воспроизведение аудио -->
+    <audio id="audioPlayer" controls autoplay></audio>
+
+    <script>
+        let mediaSource;
+        let sourceBuffer;
+        let queue = [];
+        let isAppending = false;
+        let socket = null;
+        let isStreaming = false;
+
+        const startButton = document.getElementById("startButton");
+        const audioPlayer = document.getElementById("audioPlayer");
+        const fileInput = document.getElementById("fileInput");
+        const volumeControl = document.getElementById("volumeControl");
+
+        // Подключаем WebSocket и начинаем стриминг аудио
+        startButton.addEventListener("click", () => {
+            if (isStreaming) {
+                console.log("Closing WebSocket connection...");
+                socket.close();
+                isStreaming = false;
+                queue = [];
+                isAppending = false;
+
+                if (mediaSource && mediaSource.readyState === "open") {
+                    try {
+                        mediaSource.endOfStream();
+                        mediaSource = null;
+                    } catch (error) {
+                        console.error("Error closing MediaSource:", error);
+                    }
+                }
+                audioPlayer.pause();
+                audioPlayer.src = "";
+                startButton.textContent = "►";
+                return;
+            }
+
+            console.log("Opening WebSocket connection...");
+            socket = new WebSocket(`${window.location.origin.replace(/^http/, 'ws')}/stream`);
+            socket.binaryType = "arraybuffer";
+
+            mediaSource = new MediaSource();
+            audioPlayer.src = URL.createObjectURL(mediaSource);
+
+            mediaSource.addEventListener("sourceopen", () => {
+                sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
+
+                socket.onmessage = (event) => {
+                    queue.push(event.data);
+                    processQueue();
+                };
+
+                isStreaming = true;
+                startButton.textContent = "■";
+            });
+
+            socket.onerror = (error) => console.error("WebSocket error:", error);
+            socket.onclose = () => {
+                console.log("WebSocket closed");
+                isStreaming = false;
+                startButton.textContent = "►";
+            };
+        });
+
+        function processQueue() {
+            if (isAppending || queue.length === 0 || !sourceBuffer || sourceBuffer.updating) {
+                return;
+            }
+            isAppending = true;
+            const chunk = queue.shift();
+            sourceBuffer.appendBuffer(chunk);
+            sourceBuffer.addEventListener("updateend", () => {
+                isAppending = false;
+                processQueue();
+            }, { once: true });
+        }
+
+        // Загрузка файла через форму
+        fileInput.addEventListener("change", (event) => {
+            const file = event.target.files[0];
+            if (file && file.type === "audio/mpeg") {
+                const formData = new FormData();
+                formData.append("file", file);
+
+                fetch("/upload", {
+                    method: "POST",
+                    body: formData,
+                })
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error("Failed to upload file");
+                    }
+                    alert("File uploaded successfully!");
+                })
+                .catch((error) => {
+                    alert("Error uploading file: " + error.message);
+                });
+            } else {
+                alert("Please select a valid MP3 file.");
+            }
+        });
+
+        // Регулировка громкости
+        volumeControl.addEventListener("input", () => {
+            audioPlayer.volume = volumeControl.value;
+        });
+    </script>
+</body>
+</html>
