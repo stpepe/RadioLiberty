@@ -14,6 +14,5 @@ FROM alpine:latest
 WORKDIR /
 
 COPY --from=builder /app/app .
-COPY --from=builder /app/static/layouts /static/layouts
 
 CMD ["./app"]

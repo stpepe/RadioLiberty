@@ -1,27 +1,14 @@
-package run
+package queue
 
 import (
-	"RadioLiberty/internal/audio_processor"
-	audio_stream "RadioLiberty/internal/audio_streamer"
 	"RadioLiberty/internal/queue"
-	"RadioLiberty/internal/server"
 	"RadioLiberty/pkg/local_storage"
 	"RadioLiberty/pkg/s3"
-	"context"
 	"log/slog"
-	"os"
-	"os/signal"
 )
 
 func Run() {
 	const errorMsg = "from radio Run error"
-
-	ctx, cancel := signal.NotifyContext(
-		context.Background(),
-		os.Interrupt,
-		os.Kill,
-	)
-	defer cancel()
 
 	generalConfig := &GeneralConfig{}
 	err := generalConfig.EnvParse("")
@@ -42,19 +29,9 @@ func Run() {
 		return
 	}
 
-	queueService, err := queue.NewQueue(localStorage, s3Storage)
-	if err != nil {
-		slog.Error(errorMsg, "error", err)
-		return
-	}
-	go queueService.Run(ctx)
+	queueService := queue.NewQueue(localStorage, s3Storage)
 
-	streamer := audio_stream.NewAudioStreamer(queueService.QueueChannel)
-	audioChan := streamer.Run(ctx)
-
-	audioProcessor := audio_processor.NewAudioProcessor(audioChan)
-
-	server := server.NewServer(queueService, audioProcessor)
+	server := queue.NewServer(queueService)
 	err = server.Run(generalConfig.Port)
 	if err != nil {
 		slog.Error(errorMsg, "error", err)
